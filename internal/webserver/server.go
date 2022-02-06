@@ -111,7 +111,7 @@ func ServeApp(cfg Config) error {
 		DB:           cfg.DB,
 		DataDir:      cfg.DataDir,
 		UserCache:    cch.New(time.Hour, 10*time.Minute),
-		SessionCache: cch.New(time.Hour, 10*time.Minute),
+		SessionCache: cch.New(time.Hour, 100*time.Minute),
 		ArchiveCache: cch.New(time.Minute, 5*time.Minute),
 		RootPath:     cfg.RootPath,
 		Log:          cfg.Log,
