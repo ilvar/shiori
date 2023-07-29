@@ -26,19 +26,22 @@ var template = `
         <a title="Update archives" @click="showDialogUpdateCache(selection)">
             <i class="fas fa-fw fa-cloud-download-alt"></i>
         </a>
+        <a title="Download ebooks" @click="ebookGenerate(selection)">
+            <i class="fas fa-fw fa-book"></i>
+        </a>
         <a title="Cancel" @click="toggleEditMode">
             <i class="fas fa-fw fa-times"></i>
         </a>
     </div>
     <p class="empty-message" v-if="!loading && listIsEmpty">No saved bookmarks yet :(</p>
     <div id="bookmarks-grid" ref="bookmarksGrid" :class="{list: appOptions.listMode}">
-        <pagination-box v-if="maxPage > 1" 
-            :page="page" 
-            :maxPage="maxPage" 
+        <pagination-box v-if="maxPage > 1"
+            :page="page"
+            :maxPage="maxPage"
             :editMode="editMode"
             @change="changePage">
         </pagination-box>
-        <bookmark-item v-for="(book, index) in bookmarks" 
+        <bookmark-item v-for="(book, index) in bookmarks"
             :id="book.id"
             :url="book.url"
             :title="book.title"
@@ -47,9 +50,10 @@ var template = `
             :imageURL="book.imageURL"
             :hasContent="book.hasContent"
             :hasArchive="book.hasArchive"
+            :hasEbook="book.hasEbook"
             :tags="book.tags"
             :index="index"
-            :key="book.id" 
+            :key="book.id"
             :editMode="editMode"
             :showId="appOptions.showId"
             :listMode="appOptions.listMode"
@@ -61,11 +65,12 @@ var template = `
             @tag-clicked="bookmarkTagClicked"
             @edit="showDialogEdit"
             @delete="showDialogDelete"
+            @generate-ebook="ebookGenerate"
             @update="showDialogUpdateCache">
         </bookmark-item>
-        <pagination-box v-if="maxPage > 1" 
-            :page="page" 
-            :maxPage="maxPage" 
+        <pagination-box v-if="maxPage > 1"
+            :page="page"
+            :maxPage="maxPage"
             :editMode="editMode"
             @change="changePage">
         </pagination-box>
@@ -209,7 +214,7 @@ export default {
 			var skipFetchTags = Error("skip fetching tags");
 
 			this.loading = true;
-			fetch(url)
+			fetch(url, {headers: {'Content-Type': 'application/json'}})
 				.then(response => {
 					if (!response.ok) throw response;
 					return response.json();
@@ -239,7 +244,7 @@ export default {
 
 					// Fetch tags if requested
 					if (fetchTags) {
-						return fetch(new URL("api/tags", document.baseURI));
+						return fetch(new URL("api/tags", document.baseURI), {headers: {'Content-Type': 'application/json'}});
 					} else {
 						this.loading = false;
 						throw skipFetchTags;
@@ -583,6 +588,61 @@ export default {
 				}
 			});
 		},
+        ebookGenerate(items) {
+            // Check and filter items
+            if (typeof items !== "object") return;
+            if (!Array.isArray(items)) items = [items];
+
+            items = items.filter(item => {
+                var id = (typeof item.id === "number") ? item.id : 0,
+                    index = (typeof item.index === "number") ? item.index : -1;
+
+                return id > 0 && index > -1;
+            });
+
+            if (items.length === 0) return;
+
+            // define variable and send request
+            var ids = items.map(item => item.id);
+            var data = {
+                ids: ids,
+            };
+            this.loading = true;
+            fetch(new URL("api/ebook", document.baseURI), {
+                method: "put",
+                body: JSON.stringify(data),
+                headers: { "Content-Type": "application/json" },
+            }).then(response => {
+                if (!response.ok) throw response;
+                return response.json();
+            }).then(json => {
+                this.selection = [];
+                this.editMode = false;
+                json.forEach(book => {
+                    // download ebooks
+                    const id = book.id;
+                    if (book.hasEbook){
+                    const ebook_url = new URL(`bookmark/${id}/ebook`, document.baseURI);
+                    const downloadLink = document.createElement("a");
+                    downloadLink.href = ebook_url.toString();
+                    downloadLink.download = `${book.title}.epub`;
+                    downloadLink.click();
+                    }
+
+                    var item = items.find(el => el.id === book.id);
+					this.bookmarks.splice(item.index, 1, book);
+                });
+            }).catch(err => {
+                this.selection = [];
+                this.editMode = false;
+                this.getErrorMessage(err).then(msg => {
+                    this.showErrorDialog(msg);
+                })
+            })
+                .finally(() => {
+                    this.loading = false;
+                });
+        },
 		showDialogUpdateCache(items) {
 			// Check and filter items
 			if (typeof items !== "object") return;
@@ -613,7 +673,12 @@ export default {
 					label: "Update archive as well",
 					type: "check",
 					value: this.appOptions.useArchive,
-				}],
+				}, {
+					name: "createEbook",
+					label: "Update Ebook as well",
+					type: "check",
+					value: this.appOptions.createEbook,
+                }],
 				mainText: "Yes",
 				secondText: "No",
 				mainClick: (data) => {
@@ -621,6 +686,7 @@ export default {
 						ids: ids,
 						createArchive: data.createArchive,
 						keepMetadata: data.keepMetadata,
+                        createEbook: data.createEbook,
 					};
 
 					this.dialog.loading = true;

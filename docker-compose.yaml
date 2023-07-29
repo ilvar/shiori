@@ -23,13 +23,14 @@ services:
       SHIORI_PG_NAME: shiori
       SHIORI_PG_HOST: postgres
       SHIORI_PG_PORT: 5432
+      SHIORI_PG_SSLMODE: disable
       SHIORI_MYSQL_USER: shiori
       SHIORI_MYSQL_PASS: shiori
       SHIORI_MYSQL_NAME: shiori
       SHIORI_MYSQL_ADDRESS: (mariadb)
 
   postgres:
-    image: postgres:13
+    image: postgres:15
     environment:
       POSTGRES_PASSWORD: shiori
       POSTGRES_USER: shiori
@@ -37,7 +38,7 @@ services:
       - "5432:5432"
 
   mariadb:
-    image: mariadb:10.9
+    image: mariadb:11
     environment:
       MYSQL_ROOT_PASSWORD: toor
       MYSQL_DATABASE: shiori

@@ -22,14 +22,8 @@ type Bookmark struct {
 	ImageURL      string `db:"image_url"     json:"imageURL"`
 	HasContent    bool   `db:"has_content"   json:"hasContent"`
 	HasArchive    bool   `json:"hasArchive"`
+	HasEbook      bool   `json:"hasEbook"`
 	Tags          []Tag  `json:"tags"`
 	CreateArchive bool   `json:"createArchive"`
-}
-
-// Account is person that allowed to access web interface.
-type Account struct {
-	ID       int    `db:"id"       json:"id"`
-	Username string `db:"username" json:"username"`
-	Password string `db:"password" json:"password,omitempty"`
-	Owner    bool   `db:"owner"    json:"owner"`
+	CreateEbook   bool   `json:"createEbook"`
 }

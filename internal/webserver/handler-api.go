@@ -13,17 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/go-shiori/shiori/internal/core"
 	"github.com/go-shiori/shiori/internal/database"
 	"github.com/go-shiori/shiori/internal/model"
-	"github.com/gofrs/uuid"
 	"github.com/julienschmidt/httprouter"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func downloadBookmarkContent(book *model.Bookmark, dataDir string, request *http.Request) (*model.Bookmark, error) {
+func downloadBookmarkContent(book *model.Bookmark, dataDir string, request *http.Request, keepTitle, keepExcerpt bool) (*model.Bookmark, error) {
 	content, contentType, err := core.DownloadBookmark(book.URL)
 	if err != nil {
 		return nil, fmt.Errorf("error downloading url: %s", err)
@@ -34,6 +32,8 @@ func downloadBookmarkContent(book *model.Bookmark, dataDir string, request *http
 		Bookmark:    *book,
 		Content:     content,
 		ContentType: contentType,
+		KeepTitle:   keepTitle,
+		KeepExcerpt: keepExcerpt,
 	}
 
 	result, isFatalErr, err := core.ProcessBookmark(processRequest)
@@ -46,103 +46,10 @@ func downloadBookmarkContent(book *model.Bookmark, dataDir string, request *http
 	return &result, err
 }
 
-// apiLogin is handler for POST /api/login
-func (h *handler) apiLogin(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	ctx := r.Context()
-
-	// Decode request
-	request := struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Remember bool   `json:"remember"`
-		Owner    bool   `json:"owner"`
-	}{}
-
-	err := json.NewDecoder(r.Body).Decode(&request)
-	checkError(err)
-
-	// Prepare function to generate session
-	genSession := func(account model.Account, expTime time.Duration) {
-		// Create session ID
-		sessionID, err := uuid.NewV4()
-		checkError(err)
-
-		// Save session ID to cache
-		strSessionID := sessionID.String()
-		h.SessionCache.Set(strSessionID, account, expTime)
-
-		// Save user's session IDs to cache as well
-		// useful for mass logout
-		sessionIDs := []string{strSessionID}
-		if val, found := h.UserCache.Get(request.Username); found {
-			sessionIDs = val.([]string)
-			sessionIDs = append(sessionIDs, strSessionID)
-		}
-		h.UserCache.Set(request.Username, sessionIDs, -1)
-
-		// Send login result
-		account.Password = ""
-		loginResult := struct {
-			Session string        `json:"session"`
-			Account model.Account `json:"account"`
-			Expires string        `json:"expires"`
-		}{strSessionID, account, time.Now().UTC().Add(expTime).Format(time.RFC1123)}
-
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(&loginResult)
-		checkError(err)
-	}
-
-	// Check if user's database is empty or there are no owner.
-	// If yes, and user uses default account, let him in.
-	searchOptions := database.GetAccountsOptions{
-		Owner: true,
-	}
-
-	accounts, err := h.DB.GetAccounts(ctx, searchOptions)
-	checkError(err)
-
-	if len(accounts) == 0 && request.Username == "shiori" && request.Password == "gopher" {
-		genSession(model.Account{
-			Username: "shiori",
-			Owner:    true,
-		}, time.Hour)
-		return
-	}
-
-	// Get account data from database
-	account, exist, err := h.DB.GetAccount(ctx, request.Username)
-	checkError(err)
-
-	if !exist {
-		panic(fmt.Errorf("username doesn't exist"))
-	}
-
-	// Compare password with database
-	err = bcrypt.CompareHashAndPassword([]byte(account.Password), []byte(request.Password))
-	if err != nil {
-		panic(fmt.Errorf("username and password don't match"))
-	}
-
-	// If login request is as owner, make sure this account is owner
-	if request.Owner && !account.Owner {
-		panic(fmt.Errorf("account level is not sufficient as owner"))
-	}
-
-	// Calculate expiration time
-	expTime := time.Hour
-	if request.Remember {
-		expTime = time.Hour * 24 * 30
-	}
-
-	// Create session
-	genSession(account, expTime)
-}
-
-// apiLogout is handler for POST /api/logout
-func (h *handler) apiLogout(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiLogout is handler for POST /api/logout
+func (h *Handler) ApiLogout(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	// Get session ID
-	sessionID := h.getSessionID(r)
+	sessionID := h.GetSessionID(r)
 	if sessionID != "" {
 		h.SessionCache.Delete(sessionID)
 	}
@@ -150,8 +57,8 @@ func (h *handler) apiLogout(w http.ResponseWriter, r *http.Request, ps httproute
 	fmt.Fprint(w, 1)
 }
 
-// apiGetBookmarks is handler for GET /api/bookmarks
-func (h *handler) apiGetBookmarks(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiGetBookmarks is handler for GET /api/bookmarks
+func (h *Handler) ApiGetBookmarks(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -203,6 +110,7 @@ func (h *handler) apiGetBookmarks(w http.ResponseWriter, r *http.Request, ps htt
 		strID := strconv.Itoa(bookmarks[i].ID)
 		imgPath := fp.Join(h.DataDir, "thumb", strID)
 		archivePath := fp.Join(h.DataDir, "archive", strID)
+		ebookPath := fp.Join(h.DataDir, "ebook", strID+".epub")
 
 		if fileExists(imgPath) {
 			bookmarks[i].ImageURL = path.Join(h.RootPath, "bookmark", strID, "thumb")
@@ -210,6 +118,9 @@ func (h *handler) apiGetBookmarks(w http.ResponseWriter, r *http.Request, ps htt
 
 		if fileExists(archivePath) {
 			bookmarks[i].HasArchive = true
+		}
+		if fileExists(ebookPath) {
+			bookmarks[i].HasEbook = true
 		}
 	}
 
@@ -225,8 +136,8 @@ func (h *handler) apiGetBookmarks(w http.ResponseWriter, r *http.Request, ps htt
 	checkError(err)
 }
 
-// apiGetTags is handler for GET /api/tags
-func (h *handler) apiGetTags(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiGetTags is handler for GET /api/tags
+func (h *Handler) ApiGetTags(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -242,8 +153,8 @@ func (h *handler) apiGetTags(w http.ResponseWriter, r *http.Request, ps httprout
 	checkError(err)
 }
 
-// apiRenameTag is handler for PUT /api/tag
-func (h *handler) apiRenameTag(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiRenameTag is handler for PUT /api/tag
+func (h *Handler) ApiRenameTag(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -282,8 +193,8 @@ func newAPIInsertBookmarkPayload() *apiInsertBookmarkPayload {
 	}
 }
 
-// apiInsertBookmark is handler for POST /api/bookmark
-func (h *handler) apiInsertBookmark(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiInsertBookmark is handler for POST /api/bookmark
+func (h *Handler) ApiInsertBookmark(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -310,6 +221,7 @@ func (h *handler) apiInsertBookmark(w http.ResponseWriter, r *http.Request, ps h
 		panic(fmt.Errorf("failed to clean URL: %v", err))
 	}
 
+	userHasDefinedTitle := book.Title != ""
 	// Make sure bookmark's title not empty
 	if book.Title == "" {
 		book.Title = book.URL
@@ -325,7 +237,7 @@ func (h *handler) apiInsertBookmark(w http.ResponseWriter, r *http.Request, ps h
 
 	if payload.Async {
 		go func() {
-			bookmark, err := downloadBookmarkContent(book, h.DataDir, r)
+			bookmark, err := downloadBookmarkContent(book, h.DataDir, r, userHasDefinedTitle, book.Excerpt != "")
 			if err != nil {
 				log.Printf("error downloading boorkmark: %s", err)
 				return
@@ -337,7 +249,7 @@ func (h *handler) apiInsertBookmark(w http.ResponseWriter, r *http.Request, ps h
 	} else {
 		// Workaround. Download content after saving the bookmark so we have the proper database
 		// id already set in the object regardless of the database engine.
-		book, err = downloadBookmarkContent(book, h.DataDir, r)
+		book, err = downloadBookmarkContent(book, h.DataDir, r, userHasDefinedTitle, book.Excerpt != "")
 		if err != nil {
 			log.Printf("error downloading boorkmark: %s", err)
 		} else if _, err := h.DB.SaveBookmarks(ctx, false, *book); err != nil {
@@ -352,7 +264,7 @@ func (h *handler) apiInsertBookmark(w http.ResponseWriter, r *http.Request, ps h
 }
 
 // apiDeleteBookmarks is handler for DELETE /api/bookmark
-func (h *handler) apiDeleteBookmark(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func (h *Handler) ApiDeleteBookmark(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -373,16 +285,18 @@ func (h *handler) apiDeleteBookmark(w http.ResponseWriter, r *http.Request, ps h
 		strID := strconv.Itoa(id)
 		imgPath := fp.Join(h.DataDir, "thumb", strID)
 		archivePath := fp.Join(h.DataDir, "archive", strID)
+		ebookPath := fp.Join(h.DataDir, "ebook", strID+".epub")
 
 		os.Remove(imgPath)
 		os.Remove(archivePath)
+		os.Remove(ebookPath)
 	}
 
 	fmt.Fprint(w, 1)
 }
 
-// apiUpdateBookmark is handler for PUT /api/bookmarks
-func (h *handler) apiUpdateBookmark(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiUpdateBookmark is handler for PUT /api/bookmarks
+func (h *Handler) ApiUpdateBookmark(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -458,8 +372,106 @@ func (h *handler) apiUpdateBookmark(w http.ResponseWriter, r *http.Request, ps h
 	checkError(err)
 }
 
-// apiUpdateCache is handler for PUT /api/cache
-func (h *handler) apiUpdateCache(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiDownloadEbook is handler for PUT /api/ebook
+func (h *Handler) ApiDownloadEbook(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	ctx := r.Context()
+
+	// Make sure session still valid
+	err := h.validateSession(r)
+	checkError(err)
+
+	// Decode request
+	request := struct {
+		IDs []int `json:"ids"`
+	}{}
+	err = json.NewDecoder(r.Body).Decode(&request)
+	checkError(err)
+
+	// Get existing bookmark from database
+	filter := database.GetBookmarksOptions{
+		IDs:         request.IDs,
+		WithContent: true,
+	}
+
+	bookmarks, err := h.DB.GetBookmarks(ctx, filter)
+	checkError(err)
+	if len(bookmarks) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Fetch data from internet
+	mx := sync.RWMutex{}
+	wg := sync.WaitGroup{}
+	chDone := make(chan struct{})
+	chProblem := make(chan int, 10)
+	semaphore := make(chan struct{}, 10)
+
+	for i, book := range bookmarks {
+		wg.Add(1)
+
+		go func(i int, book model.Bookmark) {
+			// Make sure to finish the WG
+			defer wg.Done()
+
+			// Register goroutine to semaphore
+			semaphore <- struct{}{}
+			defer func() {
+				<-semaphore
+			}()
+
+			// Download data from internet
+			content, contentType, err := core.DownloadBookmark(book.URL)
+			if err != nil {
+				chProblem <- book.ID
+				return
+			}
+
+			request := core.ProcessRequest{
+				DataDir:     h.DataDir,
+				Bookmark:    book,
+				Content:     content,
+				ContentType: contentType,
+			}
+
+			book, err = core.GenerateEbook(request)
+			content.Close()
+
+			if err != nil {
+				chProblem <- book.ID
+				return
+			}
+
+			// Update list of bookmarks
+			mx.Lock()
+			bookmarks[i] = book
+			mx.Unlock()
+		}(i, book)
+	}
+	// Receive all problematic bookmarks
+	idWithProblems := []int{}
+	go func() {
+		for {
+			select {
+			case <-chDone:
+				return
+			case id := <-chProblem:
+				idWithProblems = append(idWithProblems, id)
+			}
+		}
+	}()
+
+	// Wait until all download finished
+	wg.Wait()
+	close(chDone)
+
+	w.Header().Set("Content-Type", "application1/json")
+	err = json.NewEncoder(w).Encode(&bookmarks)
+	checkError(err)
+}
+
+// ApiUpdateCache is handler for PUT /api/cache
+func (h *Handler) ApiUpdateCache(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -471,6 +483,7 @@ func (h *handler) apiUpdateCache(w http.ResponseWriter, r *http.Request, ps http
 		IDs           []int `json:"ids"`
 		KeepMetadata  bool  `json:"keepMetadata"`
 		CreateArchive bool  `json:"createArchive"`
+		CreateEbook   bool  `json:"createEbook"`
 	}{}
 
 	err = json.NewDecoder(r.Body).Decode(&request)
@@ -506,8 +519,9 @@ func (h *handler) apiUpdateCache(w http.ResponseWriter, r *http.Request, ps http
 	for i, book := range bookmarks {
 		wg.Add(1)
 
-		// Mark whether book will be archived
+		// Mark whether book will be archived or ebook generate request
 		book.CreateArchive = request.CreateArchive
+		book.CreateEbook = request.CreateEbook
 
 		go func(i int, book model.Bookmark, keepMetadata bool) {
 			// Make sure to finish the WG
@@ -577,8 +591,8 @@ func (h *handler) apiUpdateCache(w http.ResponseWriter, r *http.Request, ps http
 	checkError(err)
 }
 
-// apiUpdateBookmarkTags is handler for PUT /api/bookmarks/tags
-func (h *handler) apiUpdateBookmarkTags(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiUpdateBookmarkTags is handler for PUT /api/bookmarks/tags
+func (h *Handler) ApiUpdateBookmarkTags(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -649,8 +663,8 @@ func (h *handler) apiUpdateBookmarkTags(w http.ResponseWriter, r *http.Request, 
 	checkError(err)
 }
 
-// apiGetAccounts is handler for GET /api/accounts
-func (h *handler) apiGetAccounts(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiGetAccounts is handler for GET /api/accounts
+func (h *Handler) ApiGetAccounts(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -666,8 +680,8 @@ func (h *handler) apiGetAccounts(w http.ResponseWriter, r *http.Request, ps http
 	checkError(err)
 }
 
-// apiInsertAccount is handler for POST /api/accounts
-func (h *handler) apiInsertAccount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiInsertAccount is handler for POST /api/accounts
+func (h *Handler) ApiInsertAccount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -686,8 +700,8 @@ func (h *handler) apiInsertAccount(w http.ResponseWriter, r *http.Request, ps ht
 	fmt.Fprint(w, 1)
 }
 
-// apiUpdateAccount is handler for PUT /api/accounts
-func (h *handler) apiUpdateAccount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiUpdateAccount is handler for PUT /api/accounts
+func (h *Handler) ApiUpdateAccount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid
@@ -738,8 +752,8 @@ func (h *handler) apiUpdateAccount(w http.ResponseWriter, r *http.Request, ps ht
 	fmt.Fprint(w, 1)
 }
 
-// apiDeleteAccount is handler for DELETE /api/accounts
-func (h *handler) apiDeleteAccount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ApiDeleteAccount is handler for DELETE /api/accounts
+func (h *Handler) ApiDeleteAccount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Make sure session still valid

@@ -20,78 +20,8 @@ import (
 	"github.com/go-shiori/shiori/internal/model"
 )
 
-// serveFile is handler for general file request
-func (h *handler) serveFile(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	rootPath := strings.Trim(h.RootPath, "/")
-	urlPath := strings.Trim(r.URL.Path, "/")
-	filePath := strings.TrimPrefix(urlPath, rootPath)
-	filePath = strings.Trim(filePath, "/")
-
-	err := serveFile(w, filePath, true)
-	checkError(err)
-}
-
-// serveJsFile is handler for GET /js/*filepath
-func (h *handler) serveJsFile(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	jsFilePath := ps.ByName("filepath")
-	jsFilePath = path.Join("js", jsFilePath)
-	jsDir, jsName := path.Split(jsFilePath)
-
-	if developmentMode && fp.Ext(jsName) == ".js" && strings.HasSuffix(jsName, ".min.js") {
-		jsName = strings.TrimSuffix(jsName, ".min.js") + ".js"
-		tmpPath := path.Join(jsDir, jsName)
-		if assetExists(tmpPath) {
-			jsFilePath = tmpPath
-		}
-	}
-
-	err := serveFile(w, jsFilePath, true)
-	checkError(err)
-}
-
-// serveIndexPage is handler for GET /
-func (h *handler) serveIndexPage(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	// Make sure session still valid
-	err := h.validateSession(r)
-	if err != nil {
-		newPath := path.Join(h.RootPath, "/login")
-		redirectURL := createRedirectURL(newPath, r.URL.String())
-		redirectPage(w, r, redirectURL)
-		return
-	}
-
-	if developmentMode {
-		if err := h.prepareTemplates(); err != nil {
-			log.Printf("error during template preparation: %s", err)
-		}
-	}
-
-	err = h.templates["index"].Execute(w, h.RootPath)
-	checkError(err)
-}
-
-// serveLoginPage is handler for GET /login
-func (h *handler) serveLoginPage(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	// Make sure session is not valid
-	err := h.validateSession(r)
-	if err == nil {
-		redirectURL := path.Join(h.RootPath, "/")
-		redirectPage(w, r, redirectURL)
-		return
-	}
-
-	if developmentMode {
-		if err := h.prepareTemplates(); err != nil {
-			log.Printf("error during template preparation: %s", err)
-		}
-	}
-
-	err = h.templates["login"].Execute(w, h.RootPath)
-	checkError(err)
-}
-
-// serveBookmarkContent is handler for GET /bookmark/:id/content
-func (h *handler) serveBookmarkContent(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ServeBookmarkContent is handler for GET /bookmark/:id/content
+func (h *Handler) ServeBookmarkContent(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Get bookmark ID from URL
@@ -119,6 +49,10 @@ func (h *handler) serveBookmarkContent(w http.ResponseWriter, r *http.Request, p
 	}
 
 	// Check if it has archive.
+	ebookPath := fp.Join(h.DataDir, "ebook", strID+".epub")
+	if fileExists(ebookPath) {
+		bookmark.HasEbook = true
+	}
 	archivePath := fp.Join(h.DataDir, "archive", strID)
 	if fileExists(archivePath) {
 		bookmark.HasArchive = true
@@ -188,7 +122,7 @@ func (h *handler) serveBookmarkContent(w http.ResponseWriter, r *http.Request, p
 
 	// Execute template
 	if developmentMode {
-		if err := h.prepareTemplates(); err != nil {
+		if err := h.PrepareTemplates(); err != nil {
 			log.Printf("error during template preparation: %s", err)
 		}
 	}
@@ -202,13 +136,37 @@ func (h *handler) serveBookmarkContent(w http.ResponseWriter, r *http.Request, p
 	checkError(err)
 }
 
-// serveThumbnailImage is handler for GET /bookmark/:id/thumb
-func (h *handler) serveThumbnailImage(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ServeThumbnailImage is handler for GET /bookmark/:id/thumb
+func (h *Handler) ServeThumbnailImage(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	// Get bookmark ID from URL
-	id := ps.ByName("id")
+	ctx := r.Context()
 
+	// Get bookmark ID from URL
+	strID := ps.ByName("id")
+
+	// Get bookmark from database
+	id, err := strconv.Atoi(strID)
+	checkError(err)
+	bookmark, exist, err := h.DB.GetBookmark(ctx, id, "")
+	checkError(err)
+
+	if !exist {
+		log.Println("error: bookmark not found")
+		return
+	}
+
+	// If it's not public, make sure session still valid
+	if bookmark.Public != 1 {
+		err = h.validateSession(r)
+		if err != nil {
+			newPath := path.Join(h.RootPath, "/login")
+			redirectURL := createRedirectURL(newPath, r.URL.String())
+			redirectPage(w, r, redirectURL)
+			return
+		}
+	}
 	// Open image
-	imgPath := fp.Join(h.DataDir, "thumb", id)
+	imgPath := fp.Join(h.DataDir, "thumb", strID)
 	img, err := os.Open(imgPath)
 	checkError(err)
 	defer img.Close()
@@ -237,8 +195,8 @@ func (h *handler) serveThumbnailImage(w http.ResponseWriter, r *http.Request, ps
 	checkError(err)
 }
 
-// serveBookmarkArchive is handler for GET /bookmark/:id/archive/*filepath
-func (h *handler) serveBookmarkArchive(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+// ServeBookmarkArchive is handler for GET /bookmark/:id/archive/*filepath
+func (h *Handler) ServeBookmarkArchive(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	ctx := r.Context()
 
 	// Get parameter from URL
@@ -305,8 +263,8 @@ func (h *handler) serveBookmarkArchive(w http.ResponseWriter, r *http.Request, p
 		err = h.templates["archive"].Execute(tplOutput, &bookmark)
 		checkError(err)
 
-		archiveCSSPath := path.Join(h.RootPath, "/css/archive.css")
-		sourceSansProCSSPath := path.Join(h.RootPath, "/css/source-sans-pro.min.css")
+		archiveCSSPath := path.Join(h.RootPath, "/assets/css/archive.css")
+		sourceSansProCSSPath := path.Join(h.RootPath, "/assets/css/source-sans-pro.min.css")
 
 		docHead := doc.Find("head")
 		docHead.PrependHtml(`<meta charset="UTF-8">`)
@@ -330,5 +288,69 @@ func (h *handler) serveBookmarkArchive(w http.ResponseWriter, r *http.Request, p
 	// Serve content
 	if _, err := w.Write(content); err != nil {
 		log.Printf("error writting response: %s", err)
+	}
+}
+
+// serveEbook is handler for GET /bookmark/:id/ebook
+func (h *Handler) ServeBookmarkEbook(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	ctx := r.Context()
+
+	// Get bookmark ID from URL
+	strID := ps.ByName("id")
+	id, err := strconv.Atoi(strID)
+	checkError(err)
+	// Get bookmark in database
+	bookmark, exist, err := h.DB.GetBookmark(ctx, id, "")
+	checkError(err)
+
+	if !exist {
+		http.Error(w, "bookmark not found", http.StatusNotFound)
+		return
+	}
+
+	// If it's not public, make sure session still valid
+	if bookmark.Public != 1 {
+		err = h.validateSession(r)
+		if err != nil {
+			newPath := path.Join(h.RootPath, "/login")
+			redirectURL := createRedirectURL(newPath, r.URL.String())
+			redirectPage(w, r, redirectURL)
+			return
+		}
+	}
+
+	// Check if it has ebook.
+	ebookPath := fp.Join(h.DataDir, "ebook", strID+".epub")
+	if !fileExists(ebookPath) {
+		http.Error(w, "ebook not found", http.StatusNotFound)
+		return
+	}
+
+	epub, err := os.Open(ebookPath)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusNotFound)
+		return
+	}
+	defer epub.Close()
+	// Set content type
+	w.Header().Set("Content-Type", "application/epub+zip")
+	// Set cache value
+	info, err := epub.Stat()
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	etag := fmt.Sprintf(`W/"%x-%x"`, info.ModTime().Unix(), info.Size())
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "max-age=86400")
+
+	// Serve epub file
+	if _, err := epub.Seek(0, 0); err != nil {
+		log.Printf("error during epub seek: %s", err)
+	}
+	_, err = io.Copy(w, epub)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 }
