@@ -2,6 +2,8 @@ package core
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -21,6 +23,7 @@ import (
 	"github.com/go-shiori/shiori/internal/model"
 	"github.com/go-shiori/warc"
 	"github.com/pkg/errors"
+	openai "github.com/sashabaranov/go-openai"
 
 	// Add support for png
 	_ "image/png"
@@ -29,12 +32,18 @@ import (
 // ProcessRequest is the request for processing bookmark.
 type ProcessRequest struct {
 	DataDir     string
+	OpenAiKey   string
 	Bookmark    model.Bookmark
 	Content     io.Reader
 	ContentType string
 	KeepTitle   bool
 	KeepExcerpt bool
 	LogArchival bool
+}
+
+type OpenAiResponse struct {
+	Tags    []string `json:"tags"`
+	Summary string   `json:"summary"`
 }
 
 // ProcessBookmark process the bookmark and archive it if needed.
@@ -112,6 +121,62 @@ func ProcessBookmark(req ProcessRequest) (book model.Bookmark, isFatalErr bool, 
 		}
 
 		book.HasContent = book.Content != ""
+	}
+
+	// TODO: clean up
+
+	if req.OpenAiKey == "" {
+		req.OpenAiKey = os.Getenv("SHIORI_OPENAI_KEY")
+	}
+
+	fmt.Printf("Got content: %v \n", book.HasContent)
+	fmt.Printf("Got token: %v \n", req.OpenAiKey)
+	if book.HasContent && req.OpenAiKey != "" {
+		client := openai.NewClient(req.OpenAiKey)
+		resp, err := client.CreateChatCompletion(
+			context.Background(),
+			openai.ChatCompletionRequest{
+				Model: openai.GPT3Dot5Turbo16K0613,
+				Messages: []openai.ChatCompletionMessage{
+					{
+						Role: openai.ChatMessageRoleSystem,
+						// TODO: extract tags
+						Content: `You are a helpful assistant who will summarize the body of a website for me. 
+						For the following article, you will do two things: Create a 1 paragraph summary, 
+						and assign any tags from my list you think are applicable. 
+						The list of tags I want you to consider is EV, cars, devops, programming, science. Your response should be in JSON, for example:
+						{
+							"tags":list_of_tags,
+							"summary":webpage_summary
+						}
+						`,
+					},
+					{
+						Role:    openai.ChatMessageRoleUser,
+						Content: book.Content,
+					},
+				},
+			},
+		)
+
+		if err == nil {
+			var respData OpenAiResponse
+			err = json.Unmarshal([]byte(resp.Choices[0].Message.Content), &respData)
+
+			if err == nil {
+				book.Excerpt = respData.Summary
+				for _, tagString := range respData.Tags {
+					var tag = model.Tag{
+						Name: strings.TrimSpace(tagString),
+					}
+					book.Tags = append(book.Tags, tag)
+				}
+			} else {
+				return book, false, fmt.Errorf("failed to parse summary: %v", err)
+			}
+		} else {
+			return book, false, fmt.Errorf("failed to retrieve summary: %v", err)
+		}
 	}
 
 	// Save article image to local disk

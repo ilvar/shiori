@@ -90,6 +90,7 @@ func (h *Handler) ApiInsertViaExtension(w http.ResponseWriter, r *http.Request, 
 		book.CreateArchive = true
 		request := core.ProcessRequest{
 			DataDir:     h.DataDir,
+			OpenAiKey:   h.OpenAiKey,
 			Bookmark:    book,
 			Content:     contentBuffer,
 			ContentType: contentType,

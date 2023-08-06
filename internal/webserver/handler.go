@@ -19,6 +19,7 @@ var developmentMode = false
 type Handler struct {
 	DB           database.DB
 	DataDir      string
+	OpenAiKey    string
 	RootPath     string
 	UserCache    *cch.Cache
 	SessionCache *cch.Cache

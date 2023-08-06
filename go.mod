@@ -23,6 +23,7 @@ require (
 	github.com/muesli/go-app-paths v0.2.2
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
+	github.com/sashabaranov/go-openai v1.14.1
 	github.com/sethvargo/go-envconfig v0.9.0
 	github.com/shurcooL/vfsgen v0.0.0-20230704071429-0000e147ea92
 	github.com/sirupsen/logrus v1.9.3

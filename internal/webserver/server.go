@@ -12,6 +12,7 @@ import (
 type Config struct {
 	DB            database.DB
 	DataDir       string
+	OpenAiKey     string
 	ServerAddress string
 	ServerPort    int
 	RootPath      string
@@ -22,6 +23,7 @@ func GetLegacyHandler(cfg Config, dependencies *config.Dependencies) *Handler {
 	return &Handler{
 		DB:           cfg.DB,
 		DataDir:      cfg.DataDir,
+		OpenAiKey:    cfg.OpenAiKey,
 		UserCache:    cch.New(time.Hour, 10*time.Minute),
 		SessionCache: cch.New(time.Hour, 100*time.Minute),
 		ArchiveCache: cch.New(time.Minute, 5*time.Minute),

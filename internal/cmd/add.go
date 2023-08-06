@@ -93,6 +93,7 @@ func addHandler(cmd *cobra.Command, args []string) {
 		if err == nil && content != nil {
 			request := core.ProcessRequest{
 				DataDir:     cfg.Storage.DataDir,
+				OpenAiKey:   cfg.OpenAIKey,
 				Bookmark:    book,
 				Content:     content,
 				ContentType: contentType,

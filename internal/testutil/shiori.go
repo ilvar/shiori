@@ -31,7 +31,7 @@ func GetTestConfigurationAndDependencies(t *testing.T, ctx context.Context, logg
 	deps := config.NewDependencies(logger, db, cfg)
 	deps.Database = db
 	deps.Domains.Auth = domains.NewAccountsDomain(logger, cfg.Http.SecretKey, db)
-	deps.Domains.Archiver = domains.NewArchiverDomain(logger, cfg.Storage.DataDir)
+	deps.Domains.Archiver = domains.NewArchiverDomain(logger, cfg.Storage.DataDir, cfg.OpenAIKey)
 
 	return cfg, deps
 }

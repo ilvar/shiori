@@ -73,6 +73,7 @@ type StorageConfig struct {
 type Config struct {
 	Hostname    string `env:"HOSTNAME,required"`
 	Development bool   `env:"DEVELOPMENT,default=False"`
+	OpenAIKey   string `env:"OPENAI_KEY"`
 	Database    *DatabaseConfig
 	Storage     *StorageConfig
 	// LogLevel string `env:"LOG_LEVEL,default=info"`
