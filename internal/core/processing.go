@@ -143,8 +143,9 @@ func ProcessBookmark(req ProcessRequest) (book model.Bookmark, isFatalErr bool, 
 						// TODO: extract tags
 						Content: `You are a helpful assistant who will summarize the body of a website for me. 
 						For the following article, you will do two things: Create a 1 paragraph summary, 
-						and assign any tags from my list you think are applicable. 
-						The list of tags I want you to consider is EV, cars, devops, programming, science. Your response should be in JSON, for example:
+						and assign 2 to 4 applicable tags. 
+
+						Your response should be in JSON, for example:
 						{
 							"tags":list_of_tags,
 							"summary":webpage_summary
@@ -165,6 +166,7 @@ func ProcessBookmark(req ProcessRequest) (book model.Bookmark, isFatalErr bool, 
 
 			if err == nil {
 				book.Excerpt = respData.Summary
+				fmt.Printf("Received tags: %v \n", respData.Tags)
 				for _, tagString := range respData.Tags {
 					var tag = model.Tag{
 						Name: strings.TrimSpace(tagString),

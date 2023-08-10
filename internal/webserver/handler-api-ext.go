@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -107,7 +108,7 @@ func (h *Handler) ApiInsertViaExtension(w http.ResponseWriter, r *http.Request, 
 		// request.
 		if err != nil && isFatalErr {
 			log.Printf("failed to process bookmark: %v", err)
-		} else if _, err := h.DB.SaveBookmarks(ctx, false, book); err != nil {
+		} else if _, err := h.DB.SaveBookmarks(context.Background(), false, book); err != nil {
 			log.Printf("error saving bookmark after downloading content: %s", err)
 		}
 	}

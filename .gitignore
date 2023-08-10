@@ -4,6 +4,7 @@
 
 # Exclude executable file
 /shiori*
+.github/workflows/docker/binaries/
 
 # Exclude development data
 /dev-data*
@@ -13,6 +14,7 @@
 
 # Dist files
 dist/
+.github/workflows/docker/binaries/
 
 # macOS trash files
 .DS_Store
