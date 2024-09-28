@@ -12,9 +12,10 @@ import (
 )
 
 type ArchiverDomain struct {
-	dataDir   string
-	openAiKey string
-	logger    *logrus.Logger
+	dataDir     string
+	openAiKey   string
+	openAiModel string
+	logger      *logrus.Logger
 }
 
 func (d *ArchiverDomain) DownloadBookmarkArchive(book model.Bookmark) (*model.Bookmark, error) {
@@ -28,6 +29,7 @@ func (d *ArchiverDomain) DownloadBookmarkArchive(book model.Bookmark) (*model.Bo
 	processRequest := core.ProcessRequest{
 		DataDir:     d.dataDir,
 		OpenAiKey:   d.openAiKey,
+		OpenAiModel: d.openAiModel,
 		Bookmark:    book,
 		Content:     content,
 		ContentType: contentType,
@@ -54,10 +56,11 @@ func (d *ArchiverDomain) GetBookmarkArchive(book model.Bookmark) error {
 	return nil
 }
 
-func NewArchiverDomain(logger *logrus.Logger, dataDir string, openAiKey string) ArchiverDomain {
+func NewArchiverDomain(logger *logrus.Logger, dataDir string, openAiKey string, openAiModel string) ArchiverDomain {
 	return ArchiverDomain{
-		dataDir:   dataDir,
-		openAiKey: openAiKey,
-		logger:    logger,
+		dataDir:     dataDir,
+		openAiKey:   openAiKey,
+		openAiModel: openAiModel,
+		logger:      logger,
 	}
 }

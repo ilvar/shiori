@@ -22,8 +22,10 @@ import (
 	"github.com/go-shiori/go-readability"
 	"github.com/go-shiori/shiori/internal/model"
 	"github.com/go-shiori/warc"
+	"github.com/invopop/jsonschema"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 	"github.com/pkg/errors"
-	openai "github.com/sashabaranov/go-openai"
 
 	// Add support for png
 	_ "image/png"
@@ -33,6 +35,7 @@ import (
 type ProcessRequest struct {
 	DataDir     string
 	OpenAiKey   string
+	OpenAiModel string
 	Bookmark    model.Bookmark
 	Content     io.Reader
 	ContentType string
@@ -42,9 +45,23 @@ type ProcessRequest struct {
 }
 
 type OpenAiResponse struct {
-	Tags    []string `json:"tags"`
-	Summary string   `json:"summary"`
+	Tags    []string `json:"tags" jsonschema_description:"Fitting tags for the article"`
+	Summary string   `json:"summary" jsonschema_description:"Summary of the article"`
 }
+
+func GenerateSchema[T any]() interface{} {
+	// Structured Outputs uses a subset of JSON schema
+	// These flags are necessary to comply with the subset
+	reflector := jsonschema.Reflector{
+		AllowAdditionalProperties: false,
+		DoNotReference:            true,
+	}
+	var v T
+	schema := reflector.Reflect(v)
+	return schema
+}
+
+var OpenAiResponseSchema = GenerateSchema[OpenAiResponse]()
 
 // ProcessBookmark process the bookmark and archive it if needed.
 // Return three values, is error fatal, and error value.
@@ -123,25 +140,18 @@ func ProcessBookmark(req ProcessRequest) (book model.Bookmark, isFatalErr bool, 
 		book.HasContent = book.Content != ""
 	}
 
-	// TODO: clean up
-
 	if req.OpenAiKey == "" {
 		req.OpenAiKey = os.Getenv("SHIORI_OPENAI_KEY")
 	}
+	if req.OpenAiModel == "" {
+		modelCode := os.Getenv("SHIORI_OPENAI_MODEL")
+		req.OpenAiModel = openai.ChatModel(modelCode)
+	}
+	if req.OpenAiModel == "" {
+		req.OpenAiModel = openai.ChatModelGPT4o
+	}
 
-	fmt.Printf("Got content: %v \n", book.HasContent)
-	fmt.Printf("Got token: %v \n", req.OpenAiKey)
-	if book.HasContent && req.OpenAiKey != "" {
-		client := openai.NewClient(req.OpenAiKey)
-		resp, err := client.CreateChatCompletion(
-			context.Background(),
-			openai.ChatCompletionRequest{
-				Model: openai.GPT3Dot5Turbo16K0613,
-				Messages: []openai.ChatCompletionMessage{
-					{
-						Role: openai.ChatMessageRoleSystem,
-						// TODO: extract tags
-						Content: `You are a helpful assistant who will summarize the body of a website for me. 
+	systemMsg := `You are a helpful assistant who will summarize the body of a website for me. 
 						For the following article, you will do two things: Create a 1 paragraph summary, 
 						and assign 2 to 5 applicable tags. Prefer tags from this list if possible:
 
@@ -154,26 +164,35 @@ func ProcessBookmark(req ProcessRequest) (book model.Bookmark, isFatalErr bool, 
 						- health
 						- science
 						- space
-						- analysis
+						- analysis`
 
-						Your response should be in JSON, for example:
-						{
-							"tags":list_of_tags,
-							"summary":webpage_summary
-						}
-						`,
-					},
-					{
-						Role:    openai.ChatMessageRoleUser,
-						Content: book.Content,
-					},
-				},
-			},
+	if book.HasContent && req.OpenAiKey != "" {
+		client := openai.NewClient(
+			option.WithAPIKey(req.OpenAiKey), // defaults to os.LookupEnv("OPENAI_API_KEY")
 		)
+		schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
+			Name:        openai.F("webpage"),
+			Description: openai.F("Summary of a web page"),
+			Schema:      openai.F(OpenAiResponseSchema),
+			Strict:      openai.Bool(true),
+		}
+		chatCompletion, err := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
+			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+				openai.SystemMessage(systemMsg),
+				openai.UserMessage(book.Content),
+			}),
+			ResponseFormat: openai.F[openai.ChatCompletionNewParamsResponseFormatUnion](
+				openai.ResponseFormatJSONSchemaParam{
+					Type:       openai.F(openai.ResponseFormatJSONSchemaTypeJSONSchema),
+					JSONSchema: openai.F(schemaParam),
+				},
+			),
+			Model: openai.F(req.OpenAiModel),
+		})
 
 		if err == nil {
 			var respData OpenAiResponse
-			err = json.Unmarshal([]byte(resp.Choices[0].Message.Content), &respData)
+			err = json.Unmarshal([]byte(chatCompletion.Choices[0].Message.Content), &respData)
 
 			if err == nil {
 				book.Excerpt = respData.Summary

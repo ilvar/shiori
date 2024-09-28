@@ -63,10 +63,12 @@ func (r *LegacyAPIRoutes) HandleLogout(c *gin.Context) error {
 
 func (r *LegacyAPIRoutes) Setup(g *gin.Engine) {
 	r.legacyHandler = webserver.GetLegacyHandler(webserver.Config{
-		DB:       r.deps.Database,
-		DataDir:  r.cfg.Storage.DataDir,
-		RootPath: r.cfg.Http.RootPath,
-		Log:      false, // Already done by gin
+		DB:          r.deps.Database,
+		OpenAiKey:   r.cfg.OpenAIKey,
+		OpenAiModel: r.cfg.OpenAIModel,
+		DataDir:     r.cfg.Storage.DataDir,
+		RootPath:    r.cfg.Http.RootPath,
+		Log:         false, // Already done by gin
 	}, r.deps)
 	r.legacyHandler.PrepareSessionCache()
 	r.legacyHandler.PrepareTemplates()

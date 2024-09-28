@@ -92,6 +92,7 @@ func (h *Handler) ApiInsertViaExtension(w http.ResponseWriter, r *http.Request, 
 		request := core.ProcessRequest{
 			DataDir:     h.DataDir,
 			OpenAiKey:   h.OpenAiKey,
+			OpenAiModel: h.OpenAiModel,
 			Bookmark:    book,
 			Content:     contentBuffer,
 			ContentType: contentType,

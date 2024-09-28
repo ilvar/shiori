@@ -2,6 +2,8 @@
 FROM golang:1.19-alpine3.18 AS builder
 WORKDIR /src
 COPY . .
+RUN apk add --no-cache git
+RUN go get github.com/go-shiori/shiori/docs
 RUN go build -ldflags '-s -w'
 
 # server image

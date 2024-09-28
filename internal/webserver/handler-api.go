@@ -21,7 +21,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func downloadBookmarkContent(book *model.Bookmark, dataDir string, openAiKey string,
+func downloadBookmarkContent(book *model.Bookmark, dataDir string, openAiKey string, openAIModel string,
 	request *http.Request, keepTitle, keepExcerpt bool) (*model.Bookmark, error) {
 	content, contentType, err := core.DownloadBookmark(book.URL)
 	if err != nil {
@@ -31,6 +31,7 @@ func downloadBookmarkContent(book *model.Bookmark, dataDir string, openAiKey str
 	processRequest := core.ProcessRequest{
 		DataDir:     dataDir,
 		OpenAiKey:   openAiKey,
+		OpenAiModel: openAIModel,
 		Bookmark:    *book,
 		Content:     content,
 		ContentType: contentType,
@@ -239,7 +240,7 @@ func (h *Handler) ApiInsertBookmark(w http.ResponseWriter, r *http.Request, ps h
 
 	if payload.Async {
 		go func() {
-			bookmark, err := downloadBookmarkContent(book, h.DataDir, h.OpenAiKey,
+			bookmark, err := downloadBookmarkContent(book, h.DataDir, h.OpenAiKey, h.OpenAiModel,
 				r, userHasDefinedTitle, book.Excerpt != "")
 			if err != nil {
 				log.Printf("error downloading boorkmark: %s", err)
@@ -252,7 +253,7 @@ func (h *Handler) ApiInsertBookmark(w http.ResponseWriter, r *http.Request, ps h
 	} else {
 		// Workaround. Download content after saving the bookmark so we have the proper database
 		// id already set in the object regardless of the database engine.
-		book, err = downloadBookmarkContent(book, h.DataDir, h.OpenAiKey,
+		book, err = downloadBookmarkContent(book, h.DataDir, h.OpenAiKey, h.OpenAiModel,
 			r, userHasDefinedTitle, book.Excerpt != "")
 		if err != nil {
 			log.Printf("error downloading boorkmark: %s", err)

@@ -20,6 +20,7 @@ type Handler struct {
 	DB           database.DB
 	DataDir      string
 	OpenAiKey    string
+	OpenAiModel  string
 	RootPath     string
 	UserCache    *cch.Cache
 	SessionCache *cch.Cache

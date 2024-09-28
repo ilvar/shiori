@@ -74,6 +74,7 @@ type Config struct {
 	Hostname    string `env:"HOSTNAME,required"`
 	Development bool   `env:"DEVELOPMENT,default=False"`
 	OpenAIKey   string `env:"OPENAI_KEY"`
+	OpenAIModel string `env:"OPENAI_MODEL"`
 	Database    *DatabaseConfig
 	Storage     *StorageConfig
 	// LogLevel string `env:"LOG_LEVEL,default=info"`

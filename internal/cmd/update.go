@@ -168,6 +168,7 @@ func updateHandler(cmd *cobra.Command, args []string) {
 				request := core.ProcessRequest{
 					DataDir:     cfg.Storage.DataDir,
 					OpenAiKey:   cfg.OpenAIKey,
+					OpenAiModel: cfg.OpenAIModel,
 					Bookmark:    book,
 					Content:     content,
 					ContentType: contentType,
