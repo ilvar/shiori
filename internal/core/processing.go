@@ -2,6 +2,8 @@ package core
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -21,6 +23,9 @@ import (
 	"github.com/go-shiori/shiori/internal/dependencies"
 	"github.com/go-shiori/shiori/internal/model"
 	"github.com/go-shiori/warc"
+	"github.com/invopop/jsonschema"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 	"github.com/pkg/errors"
 	_ "golang.org/x/image/webp"
 
@@ -38,6 +43,25 @@ type ProcessRequest struct {
 	KeepExcerpt bool
 	LogArchival bool
 }
+
+type TagsResponse struct {
+	Tags    []string `json:"tags" jsonschema_description:"List of tags, preferrably from: cars,ev,tech,programming,energy,food,health,science,space,analysis"`
+	Summary string   `json:"summary" jsonschema_description:"Summary of the article"`
+}
+
+func GenerateSchema[T any]() interface{} {
+	// Structured Outputs uses a subset of JSON schema
+	// These flags are necessary to comply with the subset
+	reflector := jsonschema.Reflector{
+		AllowAdditionalProperties: false,
+		DoNotReference:            true,
+	}
+	var v T
+	schema := reflector.Reflect(v)
+	return schema
+}
+
+var TagsResponseSchema = GenerateSchema[TagsResponse]()
 
 var ErrNoSupportedImageType = errors.New("unsupported image type")
 
@@ -121,6 +145,62 @@ func ProcessBookmark(deps *dependencies.Dependencies, req ProcessRequest) (book 
 
 		book.HasContent = book.Content != ""
 		book.ModifiedAt = ""
+	}
+
+	openAiKey := os.Getenv("SHIORI_OPENAI_KEY")
+	modelCode := os.Getenv("SHIORI_OPENAI_MODEL")
+	openAiModel := openai.ChatModelGPT4o
+	if modelCode != "" {
+		openAiModel = openai.ChatModel(modelCode)
+	}
+
+	systemMsg := `You are a helpful assistant who will summarize the body of a website for me. 
+						For the following article, you will do two things: Create a 1 paragraph summary, 
+						and assign 2 to 5 applicable tags.`
+
+	if book.HasContent && openAiKey != "" {
+		client := openai.NewClient(
+			option.WithAPIKey(openAiKey), // defaults to os.LookupEnv("OPENAI_API_KEY")
+		)
+		schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
+			Name:        openai.F("webpage"),
+			Description: openai.F("Summary of a web page"),
+			Schema:      openai.F(TagsResponseSchema),
+			Strict:      openai.Bool(true),
+		}
+		chatCompletion, err := client.Chat.Completions.New(context.TODO(), openai.ChatCompletionNewParams{
+			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+				openai.SystemMessage(systemMsg),
+				openai.UserMessage(book.Content),
+			}),
+			ResponseFormat: openai.F[openai.ChatCompletionNewParamsResponseFormatUnion](
+				openai.ResponseFormatJSONSchemaParam{
+					Type:       openai.F(openai.ResponseFormatJSONSchemaTypeJSONSchema),
+					JSONSchema: openai.F(schemaParam),
+				},
+			),
+			Model: openai.F(openAiModel),
+		})
+
+		if err == nil {
+			var respData TagsResponse
+			err = json.Unmarshal([]byte(chatCompletion.Choices[0].Message.Content), &respData)
+
+			if err == nil {
+				book.Excerpt = respData.Summary
+				fmt.Printf("Received tags: %v \n", respData.Tags)
+				for _, tagString := range respData.Tags {
+					var tag = model.Tag{
+						Name: strings.TrimSpace(tagString),
+					}
+					book.Tags = append(book.Tags, tag)
+				}
+			} else {
+				return book, false, fmt.Errorf("failed to parse summary: %v", err)
+			}
+		} else {
+			return book, false, fmt.Errorf("failed to retrieve summary: %v", err)
+		}
 	}
 
 	// Save article image to local disk
